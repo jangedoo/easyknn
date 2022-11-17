@@ -1,6 +1,5 @@
 name: Release
 on:
-  push:
   release:
     types:
       - created
@@ -27,5 +26,6 @@ jobs:
         env:
           PYPI_API_TOKEN: ${{ secrets.PYPI_API_TOKEN }}
         run: |
+          poetry version $(git describe --tags --abbrev=0)
           poetry config pypi-token.pypi $PYPI_API_TOKEN
           poetry publish --build
