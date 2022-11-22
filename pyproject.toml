@@ -1,6 +1,6 @@
 [tool.poetry]
 name = "easyknn"
-version = "0.1.0"
+version = "0.2.0"
 description = "Easy nearest neighbors using Annoy or SKLearn"
 authors = ["Sanjaya Subedi <jangedoo@gmail.com>"]
 packages = [
