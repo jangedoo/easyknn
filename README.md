@@ -25,6 +25,10 @@ neighbors, distances = knn.neighbors_by_item(item="a", k=2)
 # neighbors is a list of actual items not numeric indexes. nice !
 assert all(nbor in ["a", "b", "c"] for nbor in neighbors)
 
+# there are also two other functions to get nearest neighbors
+# knn.neighbors(...) expects 1D vector
+# knn.neighbors_by_index(...) expects an item index as input
+
 # save this to a folder
 knn.save("path/to/directory")
 
