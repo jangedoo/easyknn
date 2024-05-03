@@ -12,7 +12,7 @@ def index_builder() -> easyknn.EmbeddingsIndexBuilder:
     return builder
 
 
-@pytest.mark.parametrize("backend", ["annoy", "sklearn"])
+@pytest.mark.parametrize("backend", ["annoy", "sklearn", "faiss"])
 def test_neighbors(backend: str, index_builder: easyknn.EmbeddingsIndexBuilder):
     knn = easyknn.EasyKNN.from_builder(builder=index_builder, backend=backend)
     items, distances = knn.neighbors(vector=[1.0, 2.0], k=2)
@@ -28,7 +28,7 @@ def test_neighbors(backend: str, index_builder: easyknn.EmbeddingsIndexBuilder):
     assert len(distances) == 2
 
 
-@pytest.mark.parametrize("backend", ["annoy", "sklearn"])
+@pytest.mark.parametrize("backend", ["annoy", "sklearn", "faiss"])
 def test_save_an_load(backend: str, index_builder: easyknn.EmbeddingsIndexBuilder):
     knn = easyknn.EasyKNN.from_builder(builder=index_builder, backend=backend)
 
@@ -56,6 +56,14 @@ def test_from_builder_with_sklearn(index_builder: easyknn.EmbeddingsIndexBuilder
 def test_from_builder_with_annoy(index_builder: easyknn.EmbeddingsIndexBuilder):
     knn = easyknn.EasyKNN.from_builder_with_annoy(builder=index_builder)
     assert isinstance(knn.index, easyknn.AnnoyBackend)
+    items, distances = knn.neighbors(vector=[1.0, 2.0], k=2)
+    assert items == ["a", "c"]
+    assert len(distances) == 2
+
+
+def test_from_builder_with_faiss(index_builder: easyknn.EmbeddingsIndexBuilder):
+    knn = easyknn.EasyKNN.from_builder_with_faiss(builder=index_builder)
+    assert isinstance(knn.index, easyknn.FAISSBackend)
     items, distances = knn.neighbors(vector=[1.0, 2.0], k=2)
     assert items == ["a", "c"]
     assert len(distances) == 2

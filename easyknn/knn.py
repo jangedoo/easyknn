@@ -304,6 +304,8 @@ class EasyKNN:
             index = SKLearnKNNBackend.load(index_path)
         elif backend_cls_name == AnnoyBackend.__name__:
             index = AnnoyBackend.load(index_path)
+        elif backend_cls_name == FAISSBackend.__name__:
+            index = FAISSBackend.load(index_path)
         else:
             raise Exception(
                 f"Unsupported backend [{backend_cls_name}] specified. Cannot load."
@@ -402,11 +404,12 @@ class EasyKNN:
         cls,
         builder: EmbeddingsIndexBuilder,
         is_binary_index=False,
-        index_factory_str: str = "Flat",
+        index_factory_str: str | None = None,
     ):
         init_kwargs = {
             "is_binary_index": is_binary_index,
-            "factory_str": index_factory_str,
+            "factory_str": index_factory_str
+            or ("BFlat" if is_binary_index else "Flat"),
         }
 
         return cls.from_builder(
