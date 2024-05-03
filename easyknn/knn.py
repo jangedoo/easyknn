@@ -408,8 +408,9 @@ class EasyKNN:
     ):
         init_kwargs = {
             "is_binary_index": is_binary_index,
-            "factory_str": index_factory_str
-            or ("BFlat" if is_binary_index else "Flat"),
+            "factory_str": (
+                index_factory_str or ("BFlat" if is_binary_index else "Flat")
+            ),
         }
 
         return cls.from_builder(
