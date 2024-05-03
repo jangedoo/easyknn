@@ -143,6 +143,103 @@ class AnnoyBackend(KNNBackend):
         return obj
 
 
+class FAISSBackend(KNNBackend):
+    def build(
+        self, vectors, init_kwargs: dict | None = None, fit_kwargs: dict | None = None
+    ):
+        import faiss
+        import numpy as np
+
+        fit_kwargs = fit_kwargs or {}
+        init_kwargs = init_kwargs or {}
+        is_binary_index = init_kwargs.get("is_binary_index", False)
+        factory_fn = (
+            faiss.index_binary_factory if is_binary_index else faiss.index_factory
+        )
+        factory_str = init_kwargs.get(
+            "factory_str", "BFlat" if is_binary_index else "Flat"
+        )
+
+        if not isinstance(vectors, np.ndarray):
+            vectors = np.array(vectors)
+
+        ndims = len(vectors[0]) * (8 if is_binary_index else 1)
+
+        self.index = factory_fn(ndims, factory_str)
+
+        if not self.index.is_trained:
+            self.index.train(vectors)
+
+        self.index.add(vectors)
+
+        self.init_kwargs = init_kwargs
+        self.fit_kwargs = fit_kwargs
+
+    @property
+    def is_binary_index(self):
+        return self.init_kwargs.get("is_binary_index", False)
+
+    def get_nns_by_index(self, i: int, n: int, include_distances: bool = True):
+        vector = self.index.reconstruct(i)
+        return self.get_nns_by_vector(vector, n=n, include_distances=include_distances)
+
+    def get_nns_by_vector(self, vector, n: int, include_distances: bool = True):
+        import numpy as np
+
+        if not isinstance(vector, np.ndarray):
+            vector = np.array(vector)
+        if vector.ndim != 1:
+            raise ValueError("vector must be 1D")
+
+        vector = vector.reshape(1, -1)
+
+        dist_list, nbors_list = self.index.search(vector, n)
+        if include_distances:
+            return nbors_list[0], dist_list[0]
+        else:
+            return nbors_list[0]
+
+    def save(self, path: Path | str):
+        import faiss
+
+        path = Path(path)
+        path.mkdir(parents=True, exist_ok=True)
+        index_path = path / "faiss.index"
+        init_params_path = path / "init.pkl"
+        fit_params_path = path / "fit.pkl"
+        pickle.dump(self.init_kwargs, init_params_path.open("wb"))
+        pickle.dump(self.fit_kwargs, fit_params_path.open("wb"))
+
+        if self.is_binary_index:
+            faiss.write_index_binary(self.index, str(index_path))
+        else:
+            faiss.write_index(self.index, str(index_path))
+
+    @classmethod
+    def load(cls, path: Path | str):
+        import faiss
+
+        path = Path(path)
+        index_path = path / "faiss.index"
+        init_params_path = path / "init.pkl"
+        fit_params_path = path / "fit.pkl"
+
+        init_params = pickle.load(init_params_path.open("rb"))
+        fit_params = pickle.load(fit_params_path.open("rb"))
+
+        is_binary_index = init_params.get("is_binary_index", False)
+        if is_binary_index:
+            index = faiss.read_index_binary(str(index_path))
+        else:
+            index = faiss.read_index(str(index_path))
+
+        obj = cls()
+        obj.index = index
+        obj.init_kwargs = init_params
+        obj.fit_kwargs = fit_params
+        return obj
+
+
 class EmbeddingsIndexBuilder:
     def __init__(self):
         self.embeddings = []
@@ -207,6 +304,8 @@ class EasyKNN:
             index = SKLearnKNNBackend.load(index_path)
         elif backend_cls_name == AnnoyBackend.__name__:
             index = AnnoyBackend.load(index_path)
+        elif backend_cls_name == FAISSBackend.__name__:
+            index = FAISSBackend.load(index_path)
         else:
             raise Exception(
                 f"Unsupported backend [{backend_cls_name}] specified. Cannot load."
@@ -237,18 +336,19 @@ class EasyKNN:
         builder: EmbeddingsIndexBuilder,
         init_kwargs: dict | None = None,
         fit_kwargs: dict | None = None,
-        backend: str = "annoy",
+        backend: Literal["annoy", "sklearn", "faiss"] = "annoy",
     ):
         init_kwargs = init_kwargs or {}
         fit_kwargs = fit_kwargs or {}
-        backend = backend.lower().strip()
         if backend == "annoy":
             backend_cls = AnnoyBackend
         elif backend == "sklearn":
             backend_cls = SKLearnKNNBackend
+        elif backend == "faiss":
+            backend_cls = FAISSBackend
         else:
             raise ValueError(
-                f"Unsupported backed {backend}. Must be one of [annoy, sklearn]"
+                f"Unsupported backed {backend}. Must be one of [annoy, sklearn, faiss]"
             )
 
         index = builder.build(
@@ -297,4 +397,22 @@ class EasyKNN:
             init_kwargs=init_kwargs,
             fit_kwargs=fit_kwargs,
             backend="annoy",
+        )
+
+    @classmethod
+    def from_builder_with_faiss(
+        cls,
+        builder: EmbeddingsIndexBuilder,
+        is_binary_index=False,
+        index_factory_str: str | None = None,
+    ):
+        init_kwargs = {
+            "is_binary_index": is_binary_index,
+            "factory_str": (
+                index_factory_str or ("BFlat" if is_binary_index else "Flat")
+            ),
+        }
+
+        return cls.from_builder(
+            builder=builder, init_kwargs=init_kwargs, fit_kwargs=None, backend="faiss"
         )
