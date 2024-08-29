@@ -12,18 +12,19 @@ import easyknn
 # create a builder
 builder = easyknn.EmbeddingsIndexBuilder()
 
-# add embeddings/vectors. anything hashable can be used as items
-builder.add([[1.0, 2.0], [5.0, 1.0], [1, 2.5]], items=["a", "b", "c"])
+# add embeddings/vectors. anything picklable can be used as items if desired
+builder.add([[1.0, 2.0], [5.0, 1.0], [1, 2.5]], item_keys=["a", "b", "c"], items=["data for a", "data for b", "data for c"])
 # add more embeddings
-builder.add([[1.0, 2.0], [1, 2.5]], items=["e", "f"])
+builder.add([[1.0, 2.0], [1, 2.5]], item_keys=["e", "f"], items=["data for e", "data for f"])
 # if you add new embedding for already existing item, then it's embeddings will be replaced
-builder.add([[500, 200]], items=["e"])
+builder.add([[500, 200]], item_keys=["e"], items=["data for e"])
 
-backend = "annoy" # can be sklearn as well
+backend = "annoy" # can be sklearn or faiss as well
 knn = easyknn.EasyKNN.from_builder(builder=builder, backend=backend)
 neighbors, distances = knn.neighbors_by_item(item="a", k=2)
 # neighbors is a list of actual items not numeric indexes. nice !
-assert all(nbor in ["a", "b", "c"] for nbor in neighbors)
+# if items are not passed to the builder, items_keys will be returned instead
+assert all(nbor in ["data for a", "data for c"] for nbor in neighbors)
 
 # there are also two other functions to get nearest neighbors
 # knn.neighbors(...) expects 1D vector
