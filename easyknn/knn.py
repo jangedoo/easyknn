@@ -1,8 +1,19 @@
 from __future__ import annotations
 
+import logging
 import pickle
+import shutil
 from pathlib import Path
 from typing import Literal, Type
+
+from easyknn.item_store import (
+    InMemoryItemDataReader,
+    ItemDataReader,
+    ItemDataWriter,
+    MemoryMappedItemDataReader,
+)
+
+logger = logging.getLogger(__name__)
 
 
 class KNNBackend:
@@ -243,19 +254,39 @@ class FAISSBackend(KNNBackend):
 class EmbeddingsIndexBuilder:
     def __init__(self):
         self.embeddings = []
-        self.item2idx = {}
+        self.item_key2idx = {}
+        self.items = []
 
-    def add(self, embeddings, items):
+    def add(self, embeddings, item_keys, items=None):
         assert len(embeddings) == len(
-            items
+            item_keys
         ), "Length of embeddings and items must be same"
-        for embedding, item in zip(embeddings, items):
-            existing_idx = self.item2idx.get(item)
+        if items is not None:
+            assert len(embeddings) == len(
+                items
+            ), "Length of embeddings and items must be same"
+
+        if len(self.embeddings) > 0 and len(self.items) == 0 and items:
+            raise ValueError(
+                "Previously the items were not added, so it cannot be added now"
+            )
+
+        if len(self.items) > 0 and not items:
+            raise ValueError(
+                "Items were added previously so they have to be added in subsequent calls as well"
+            )
+        for item_idx, (embedding, item_key) in enumerate(zip(embeddings, item_keys)):
+            existing_idx = self.item_key2idx.get(item_key)
+            item = items[item_idx] if items else None
             if existing_idx is not None:
                 self.embeddings[existing_idx] = embedding
+                if item:
+                    self.items[existing_idx] = item
             else:
                 self.embeddings.append(embedding)
-                self.item2idx[item] = len(self.embeddings) - 1
+                if item:
+                    self.items.append(item)
+                self.item_key2idx[item_key] = len(self.embeddings) - 1
 
     def build(
         self,
@@ -269,13 +300,21 @@ class EmbeddingsIndexBuilder:
 
 
 class EasyKNN:
-    def __init__(self, index: KNNBackend, item2idx: dict):
+    def __init__(
+        self,
+        index: KNNBackend,
+        item_key2idx: dict,
+        item_data_reader: ItemDataReader | None = None,
+    ):
         self.index = index
-        self.item2idx = item2idx
-        self.idx2item = {idx: item for item, idx in self.item2idx.items()}
+        self.item_key2idx = item_key2idx
+        self.idx2item_key = {idx: item for item, idx in self.item_key2idx.items()}
+        self.item_data_reader = item_data_reader
 
     def resolve_items(self, nbor_idxs):
-        return [self.idx2item[i] for i in nbor_idxs]
+        if self.item_data_reader is not None:
+            return [self.item_data_reader.query_by_idx(i) for i in nbor_idxs]
+        return [self.idx2item_key[i] for i in nbor_idxs]
 
     def neighbors(self, vector, k=10):
         nbor_idxs, distances = self.index.get_nns_by_vector(
@@ -284,7 +323,7 @@ class EasyKNN:
         return self.resolve_items(nbor_idxs=nbor_idxs), distances
 
     def neighbors_by_item(self, item, k=10):
-        item_idx = self.item2idx[item]
+        item_idx = self.item_key2idx[item]
         return self.neighbors_by_index(item_idx, k=k)
 
     def neighbors_by_index(self, idx, k=10):
@@ -297,6 +336,7 @@ class EasyKNN:
     def load(cls, path: Path | str):
         path = Path(path)
         meta_path = path / "easyknn.pkl"
+        item_data_path = path / "item_data.pkl"
         index_path = path
         dump = pickle.load(meta_path.open("rb"))
         backend_cls_name = dump["backend_cls"]
@@ -311,24 +351,38 @@ class EasyKNN:
                 f"Unsupported backend [{backend_cls_name}] specified. Cannot load."
             )
 
-        item2idx = dump["item2idx"]
-        obj = cls(index=index, item2idx=item2idx)
+        item_key2idx = dump["item_key2idx"]
+        obj = cls(
+            index=index,
+            item_key2idx=item_key2idx,
+            item_data_reader=MemoryMappedItemDataReader(item_data_path),
+        )
         return obj
 
     def save(self, path: Path | str):
         path = Path(path)
         path.mkdir(parents=True, exist_ok=True)
         meta_path = path / "easyknn.pkl"
+        item_data_path = path / "item_data.pkl"
         index_path = path
 
         self.index.save(path=index_path)
         pickle.dump(
             {
                 "backend_cls": self.index.__class__.__name__,
-                "item2idx": self.item2idx,
+                "item_key2idx": self.item_key2idx,
             },
             meta_path.open("wb"),
         )
+
+        if isinstance(self.item_data_reader, InMemoryItemDataReader):
+            ItemDataWriter(item_data_path).write(self.item_data_reader.items)
+        elif isinstance(self.item_data_reader, MemoryMappedItemDataReader):
+            # copy the data file and meta file to the currently specified place
+            shutil.copy2(self.item_data_reader.file_path, item_data_path)
+            shutil.copy2(self.item_data_reader.meta_path, path / "item_data.meta")
+        else:
+            logger.warning("Item metadata has not been saved.")
 
     @classmethod
     def from_builder(
@@ -354,7 +408,13 @@ class EasyKNN:
         index = builder.build(
             init_kwargs=init_kwargs, fit_kwargs=fit_kwargs, backend_cls=backend_cls
         )
-        return cls(index=index, item2idx=builder.item2idx)
+        return cls(
+            index=index,
+            item_key2idx=builder.item_key2idx,
+            item_data_reader=(
+                InMemoryItemDataReader(builder.items) if builder.items else None
+            ),
+        )
 
     @classmethod
     def from_builder_with_sklearn(
